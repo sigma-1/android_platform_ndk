@@ -53,8 +53,9 @@ def logger():
     return logging.getLogger(__name__)
 
 
-def _get_jobs_arg():
-    return '-j{}'.format(multiprocessing.cpu_count() * 2)
+def _get_jobs_args():
+    cpus = multiprocessing.cpu_count()
+    return ['-j{}'.format(cpus), '-l{}'.format(cpus)]
 
 
 def _make_subtest_name(test, case):
@@ -295,16 +296,6 @@ class LibcxxTestScanner(TestScanner):
                     cls.ALL_TESTS.append(test_path)
 
 
-def _scan_test_suite(suite_dir, test_scanner):
-    tests = []
-    for dentry in os.listdir(suite_dir):
-        path = os.path.join(suite_dir, dentry)
-        if os.path.isdir(path):
-            test_name = os.path.basename(path)
-            tests.extend(test_scanner.find_tests(path, test_name))
-    return tests
-
-
 def _fixup_expected_failure(result, config, bug):
     if isinstance(result, Failure):
         return ExpectedFailure(result.test, config, bug)
@@ -361,6 +352,10 @@ def _run_test(suite, test, out_dir, test_filters):
 def flake_filter(result):
     # Only device tests can be flaky.
     if not result.test.is_flaky:
+        return False
+
+    if isinstance(result, UnexpectedSuccess):
+        # There are no flaky successes.
         return False
 
     # adb might return no text at all under high load.
@@ -457,11 +452,33 @@ class TestRunner(object):
     def __init__(self, printer):
         self.printer = printer
         self.tests = {}
+        self.build_dirs = {}
 
     def add_suite(self, name, path, test_scanner):
         if name in self.tests:
             raise KeyError('suite {} already exists'.format(name))
-        self.tests[name] = _scan_test_suite(path, test_scanner)
+        new_tests = self.scan_test_suite(path, test_scanner)
+        self.check_no_overlapping_build_dirs(name, new_tests)
+        self.tests[name] = new_tests
+
+    def scan_test_suite(self, suite_dir, test_scanner):
+        tests = []
+        for dentry in os.listdir(suite_dir):
+            path = os.path.join(suite_dir, dentry)
+            if os.path.isdir(path):
+                test_name = os.path.basename(path)
+                tests.extend(test_scanner.find_tests(path, test_name))
+        return tests
+
+    def check_no_overlapping_build_dirs(self, suite, new_tests):
+        for test in new_tests:
+            build_dir = test.get_build_dir('')
+            if build_dir in self.build_dirs:
+                dup_suite, dup_test = self.build_dirs[build_dir]
+                raise RuntimeError(
+                    'Found duplicate build directory:\n{} {}\n{} {}'.format(
+                        dup_suite, dup_test, suite, test))
+            self.build_dirs[build_dir] = (suite, test)
 
     def run(self, out_dir, test_filters):
         workqueue = wq.WorkQueue()
@@ -603,9 +620,10 @@ class UnexpectedSuccess(TestResult):
 
 
 class Test(object):
-    def __init__(self, name, test_dir):
+    def __init__(self, name, test_dir, config):
         self.name = name
         self.test_dir = test_dir
+        self.config = config
 
     @property
     def is_flaky(self):
@@ -616,6 +634,9 @@ class Test(object):
 
     def run(self, out_dir, test_filters):
         raise NotImplementedError
+
+    def __str__(self):
+        return '{} [{}]'.format(self.name, self.config)
 
 
 def _prep_build_dir(src_dir, out_dir):
@@ -811,7 +832,7 @@ def _run_build_sh_test(test, build_dir, test_dir, ndk_build_flags, abi,
                        platform, toolchain):
     _prep_build_dir(test_dir, build_dir)
     with util.cd(build_dir):
-        build_cmd = ['bash', 'build.sh', _get_jobs_arg()] + ndk_build_flags
+        build_cmd = ['bash', 'build.sh'] + _get_jobs_args() + ndk_build_flags
         test_env = dict(os.environ)
         if abi is not None:
             test_env['APP_ABI'] = abi
@@ -829,11 +850,8 @@ def _run_ndk_build_test(test, build_dir, test_dir, ndk_build_flags, abi,
                         platform, toolchain):
     _prep_build_dir(test_dir, build_dir)
     with util.cd(build_dir):
-        args = [
-            'APP_ABI=' + abi,
-            'NDK_TOOLCHAIN_VERSION=' + toolchain,
-            _get_jobs_arg(),
-        ]
+        args = ['APP_ABI=' + abi, 'NDK_TOOLCHAIN_VERSION=' + toolchain]
+        args.extend(_get_jobs_args())
         if platform is not None:
             args.append('APP_PLATFORM=android-{}'.format(platform))
         rc, out = ndkbuild.build(args + ndk_build_flags)
@@ -890,8 +908,8 @@ def _run_cmake_build_test(test, build_dir, test_dir, cmake_flags, abi,
     rc, out = util.call_output(['cmake'] + cmake_flags + args, env=env)
     if rc != 0:
         return Failure(test, out)
-    rc, out = util.call_output(['cmake', '--build', objs_dir,
-                                '--', _get_jobs_arg()], env=env)
+    rc, out = util.call_output(
+        ['cmake', '--build', objs_dir, '--'] + _get_jobs_args(), env=env)
     if rc != 0:
         return Failure(test, out)
     return Success(test)
@@ -899,9 +917,7 @@ def _run_cmake_build_test(test, build_dir, test_dir, cmake_flags, abi,
 
 class BuildTest(Test):
     def __init__(self, name, test_dir, config):
-        super(BuildTest, self).__init__(name, test_dir)
-
-        self.config = config
+        super(BuildTest, self).__init__(name, test_dir, config)
 
         if self.api is None:
             raise ValueError
@@ -998,8 +1014,7 @@ class PythonBuildTest(BuildTest):
         assert self.ndk_build_flags is not None
 
     def get_build_dir(self, out_dir):
-        return os.path.join(
-            out_dir, 'build/test.py', str(self.config), self.name)
+        return os.path.join(out_dir, 'test.py', str(self.config), self.name)
 
     def run(self, out_dir, _):
         build_dir = self.get_build_dir(out_dir)
@@ -1026,8 +1041,7 @@ class ShellBuildTest(BuildTest):
         super(ShellBuildTest, self).__init__(name, test_dir, config)
 
     def get_build_dir(self, out_dir):
-        return os.path.join(
-            out_dir, 'build/build.sh', str(self.config), self.name)
+        return os.path.join(out_dir, 'build.sh', str(self.config), self.name)
 
     def run(self, out_dir, _):
         build_dir = self.get_build_dir(out_dir)
@@ -1109,8 +1123,7 @@ class NdkBuildTest(BuildTest):
         super(NdkBuildTest, self).__init__(name, test_dir, config)
 
     def get_build_dir(self, out_dir):
-        return os.path.join(
-            out_dir, 'build/ndk-build', str(self.config), self.name)
+        return os.path.join(out_dir, 'ndk-build', str(self.config), self.name)
 
     def run(self, out_dir, _):
         build_dir = self.get_build_dir(out_dir)
@@ -1130,8 +1143,7 @@ class CMakeBuildTest(BuildTest):
         super(CMakeBuildTest, self).__init__(name, test_dir, config)
 
     def get_build_dir(self, out_dir):
-        return os.path.join(
-            out_dir, 'build/cmake', str(self.config), self.name)
+        return os.path.join(out_dir, 'cmake', str(self.config), self.name)
 
     def run(self, out_dir, _):
         build_dir = self.get_build_dir(out_dir)
@@ -1159,14 +1171,12 @@ def is_text_busy(out):
 
 class DeviceTest(Test):
     def __init__(self, name, test_dir, config):
-        super(DeviceTest, self).__init__(name, test_dir)
-
         api = _get_or_infer_app_platform(config.api, test_dir, config.abi)
         config = DeviceConfiguration(
             config.abi, api, config.toolchain, config.force_pie,
             config.verbose, config.force_deprecated_headers, config.device,
             config.device_api, config.skip_run)
-        self.config = config
+        super(DeviceTest, self).__init__(name, test_dir, config)
 
     @property
     def abi(self):
@@ -1296,8 +1306,7 @@ class NdkBuildDeviceTest(DeviceTest):
         return 'ndk-tests'
 
     def get_build_dir(self, out_dir):
-        return os.path.join(
-            out_dir, 'device/ndk-build', str(self.config), self.name)
+        return os.path.join(out_dir, 'ndk-build', str(self.config), self.name)
 
     def run(self, out_dir, test_filters):
         print('Building device test with ndk-build: {}'.format(self.name))
@@ -1332,8 +1341,7 @@ class CMakeDeviceTest(DeviceTest):
         return 'cmake-tests'
 
     def get_build_dir(self, out_dir):
-        return os.path.join(
-            out_dir, 'device/cmake', str(self.config), self.name)
+        return os.path.join(out_dir, 'cmake', str(self.config), self.name)
 
     def run(self, out_dir, test_filters):
         print('Building device test with cmake: {}'.format(self.name))
@@ -1352,8 +1360,7 @@ class CMakeDeviceTest(DeviceTest):
 
 class DeviceRunTest(Test):
     def __init__(self, name, test_dir, case_name, device_dir, config):
-        super(DeviceRunTest, self).__init__(name, test_dir)
-        self.config = config
+        super(DeviceRunTest, self).__init__(name, test_dir, config)
         self.case_name = case_name
         self.device_dir = device_dir
 
@@ -1459,12 +1466,10 @@ def get_xunit_reports(xunit_file, config):
 
 class LibcxxTest(Test):
     def __init__(self, name, test_dir, config):
-        super(LibcxxTest, self).__init__(name, test_dir)
-
         if config.api is None:
             config.api = ndk.abis.min_api_for_abi(config.abi)
 
-        self.config = config
+        super(LibcxxTest, self).__init__(name, test_dir, config)
 
     @property
     def abi(self):
@@ -1493,6 +1498,9 @@ class LibcxxTest(Test):
     @property
     def skip_run(self):
         return self.config.skip_run
+
+    def get_build_dir(self, out_dir):
+        return os.path.join(out_dir, 'libcxx', str(self.config), self.name)
 
     def run(self, out_dir, test_filters):
         xunit_output = os.path.join(out_dir, 'xunit.xml')
@@ -1655,8 +1663,7 @@ class XunitResult(Test):
     already handled for us by the libc++ test runner.
     """
     def __init__(self, name, test_dir, config):
-        super(XunitResult, self).__init__(name, test_dir)
-        self.config = config
+        super(XunitResult, self).__init__(name, test_dir, config)
 
     def run(self, _out_dir, _test_filters):
         raise NotImplementedError

@@ -308,6 +308,28 @@ class Clang(ndk.builds.Module):
             os.rename(os.path.join(install_path, 'bin/clang++.real'),
                       os.path.join(install_path, 'bin/clang++'))
 
+        if args.system == 'darwin':
+            # The Clang driver is dumb and looks for LLVMgold.so regardless of
+            # platform.
+            libs_path = os.path.join(install_path, 'lib64')
+            os.rename(os.path.join(libs_path, 'LLVMgold.dylib'),
+                      os.path.join(libs_path, 'LLVMgold.so'))
+
+            # We don't build target binaries as part of the Darwin build. The
+            # Darwin toolchains need to get these from the Linux prebuilts.
+            #
+            # The headers and libraries we care about are all in lib64/clang
+            # for both toolchains, and those two are intended to be identical
+            # between each host, so we can just replace Darwin's with the one
+            # from the Linux toolchain.
+            linux_prebuilt_path = self.get_prebuilt_path('linux')
+
+            clanglib_dir = 'lib64/clang'
+            install_clanglib = os.path.join(install_path, clanglib_dir)
+            linux_clanglib = os.path.join(linux_prebuilt_path, clanglib_dir)
+            shutil.rmtree(install_clanglib)
+            shutil.copytree(linux_clanglib, install_clanglib)
+
 
 def get_gcc_prebuilt_path(host):
     rel_prebuilt_path = 'prebuilts/ndk/current/toolchains/{}'.format(host)
@@ -353,7 +375,7 @@ class Gcc(ndk.builds.Module):
 
             clang_libs = build_support.android_path(
                 'prebuilts/ndk/current/toolchains', host_tag, 'llvm/lib64')
-            llvmgold = os.path.join(clang_libs, 'LLVMgold.so')
+            llvmgold = os.path.join(clang_libs, 'LLVMgold' + so)
             libcxx = os.path.join(clang_libs, 'libc++' + so)
             libllvm = os.path.join(clang_libs, 'libLLVM' + so)
 

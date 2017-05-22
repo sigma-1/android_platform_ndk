@@ -36,14 +36,16 @@ Announcements
 APIs
 ====
 
- * Added native APIs for Android O Developer Preview 1. To learn more about
-   these APIs, see the [Native APIs overview].
+ * Added native APIs for Android O Beta 1. To learn more about these APIs, see
+   the [Native APIs overview].
     * [AAudio API]
     * [Hardware Buffer API]
+    * [Shared Memory API]
 
 [Native APIs overview]: https://developer.android.com/ndk/guides/stable_apis.html#a26
 [AAudio API]: https://developer.android.com/ndk/reference/a_audio_8h.html
 [Hardware Buffer API]: https://developer.android.com/ndk/reference/hardware__buffer_8h.html
+[Shared Memory API]: https://developer.android.com/ndk/reference/sharedmem_8h.html
 
 NDK
 ===

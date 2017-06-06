@@ -25,19 +25,13 @@ Announcements
    in the NDK is now Ice Cream Sandwich (android-14). If your `APP_PLATFORM` is
    set lower than android-14, android-14 will be used instead.
 
- * NDK r15's release cycle is going to be extended somewhat due to the O
-   developer preview logistics. r15 beta 1 is specifically for the O APIs rather
-   than the `libandroid_support` rework we originally intended for this release.
-   As such, the `libandroid_support` work will be coming in a later beta
-   (hopefully beta 2). We'll be doing at least 3 beta releases this cycle.
-
 [Unified Headers]: docs/UnifiedHeaders.md
 
 APIs
 ====
 
- * Added native APIs for Android O Beta 1. To learn more about these APIs, see
-   the [Native APIs overview].
+ * Added native APIs for Android O. To learn more about these APIs, see the
+   [Native APIs overview].
     * [AAudio API]
     * [Hardware Buffer API]
     * [Shared Memory API]

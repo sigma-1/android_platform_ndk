@@ -48,7 +48,7 @@ your build or filing bugs.
 
 ### ndk-build
 
-Add the following to your Android.mk:
+Add the following to your Application.mk:
 
 ```makefile
 APP_DEPRECATED_HEADERS := true

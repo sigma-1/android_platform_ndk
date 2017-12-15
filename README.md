@@ -73,17 +73,12 @@ The NDK consists of three parts: host binaries, target prebuilts, and others
 Prerequisites
 -------------
 
-* [AOSP NDK Repository](http://source.android.com/source/downloading.html)
-    * Check out the branch `master-ndk`
+* NDK Repository
+    * Check out the branch `ndk-r15-valex`
 
         ```bash
-        repo init -u https://android.googlesource.com/platform/manifest \
-            -b master-ndk
-
-        # Googlers, use
-        repo init -u \
-            persistent-https://android.git.corp.google.com/platform/manifest \
-            -b master-ndk
+        repo init -u https://github.com/sigma-1/ndk_manifest \
+            -b ndk-r15-valex
         ```
 
 * Additional Linux Dependencies (available from apt):
